@@ -1,0 +1,204 @@
+{% extends "base.html" %}
+{% block title %}Training {{ session.date.strftime("%d %b %Y") }} – EVV{% endblock %}
+
+{% block content %}
+
+<div style="display:flex;align-items:center;gap:1rem;margin-bottom:1.5rem;flex-wrap:wrap;">
+  <a href="/training/" class="btn btn-ghost">&larr; Terug</a>
+  <h1 style="margin:0;">Training {{ session.date.strftime("%d %B %Y") }}</h1>
+</div>
+
+<!-- ── Stats row ── -->
+<div style="display:flex;gap:1rem;margin-bottom:1.5rem;flex-wrap:wrap;">
+  <div class="card" style="flex:1;min-width:140px;text-align:center;padding:1rem;">
+    <div style="font-size:2.5rem;font-weight:700;color:var(--green);">{{ present_count }}</div>
+    <div style="color:var(--gray-600);font-size:.875rem;">Aanwezig</div>
+  </div>
+  <div class="card" style="flex:1;min-width:140px;text-align:center;padding:1rem;">
+    <div style="font-size:2.5rem;font-weight:700;color:var(--red);">{{ absent_count }}</div>
+    <div style="color:var(--gray-600);font-size:.875rem;">Afwezig</div>
+  </div>
+  <div class="card" style="flex:1;min-width:140px;text-align:center;padding:1rem;">
+    {% set total = present_count + absent_count %}
+    {% set pct = ((present_count / total * 100)|round(1)) if total > 0 else 0 %}
+    <div style="font-size:2.5rem;font-weight:700;color:var(--gray-700);">{{ pct }}%</div>
+    <div style="color:var(--gray-600);font-size:.875rem;">Aanwezigheid</div>
+  </div>
+  {% if session.location %}
+  <div class="card" style="flex:2;min-width:200px;padding:1rem;">
+    <div style="font-size:.75rem;font-weight:600;color:var(--gray-600);text-transform:uppercase;letter-spacing:.05em;">Locatie</div>
+    <div style="font-size:1rem;margin-top:.25rem;">{{ session.location }}</div>
+  </div>
+  {% endif %}
+</div>
+
+{% if session.notes %}
+<div class="card" style="margin-bottom:1.5rem;padding:1rem;">
+  <span style="font-size:.75rem;font-weight:600;color:var(--gray-600);text-transform:uppercase;">Notities</span>
+  <p style="margin-top:.25rem;">{{ session.notes }}</p>
+</div>
+{% endif %}
+
+<!-- ── Aanwezigheidslijst ── -->
+<div class="card">
+  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem;flex-wrap:wrap;gap:.5rem;">
+    <h2 style="margin:0;">Aanwezigheid registreren</h2>
+    <div style="display:flex;gap:.5rem;">
+      <button class="btn btn-primary" onclick="markAll(true)">Allen aanwezig</button>
+      <button class="btn btn-ghost"   onclick="markAll(false)">Allen afwezig</button>
+    </div>
+  </div>
+
+  <div id="save-status" style="display:none;padding:.5rem 1rem;border-radius:8px;margin-bottom:1rem;font-size:.875rem;"></div>
+
+  {% if players %}
+  <table>
+    <thead>
+      <tr>
+        <th>#</th>
+        <th>Naam</th>
+        <th>Aanwezig</th>
+        <th>Notitie</th>
+      </tr>
+    </thead>
+    <tbody>
+    {% for player in players %}
+    {% set att = attendance_map.get(player.id) %}
+    <tr id="row-{{ att.id if att else 0 }}">
+      <td>
+        {% if player.number %}
+        <span class="badge badge-gray">{{ player.number }}</span>
+        {% else %}–{% endif %}
+      </td>
+      <td><strong>{{ player.name }}</strong></td>
+      <td>
+        {% if att %}
+        <label class="toggle" title="{{ 'Aanwezig' if att.present else 'Afwezig' }}">
+          <input type="checkbox"
+                 id="toggle-{{ att.id }}"
+                 data-id="{{ att.id }}"
+                 {% if att.present %}checked{% endif %}
+                 onchange="saveAttendance({{ att.id }}, this.checked)" />
+          <span class="slider"></span>
+        </label>
+        {% endif %}
+      </td>
+      <td>
+        {% if att %}
+        <input type="text"
+               id="note-{{ att.id }}"
+               data-id="{{ att.id }}"
+               value="{{ att.note or '' }}"
+               placeholder="Reden afwezigheid..."
+               style="max-width:240px;"
+               onblur="saveNote({{ att.id }})" />
+        {% endif %}
+      </td>
+    </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <div class="empty">
+    <p>Geen spelers in de selectie.</p>
+    <a href="/training/" class="btn btn-primary" style="margin-top:1rem;">Spelers toevoegen</a>
+  </div>
+  {% endif %}
+</div>
+
+<!-- ── Overzicht aanwezigen/afwezigen ── -->
+<div class="grid-2">
+  <div class="card" id="present-list">
+    <h2 style="color:var(--green);">Aanwezig</h2>
+    <ul style="list-style:none;line-height:2;">
+    {% for player in players %}
+    {% set att = attendance_map.get(player.id) %}
+    {% if att and att.present %}
+    <li id="present-{{ att.id if att else 0 }}" class="player-present-item">
+      {{ player.name }}{% if player.number %} <span class="badge badge-gray">{{ player.number }}</span>{% endif %}
+    </li>
+    {% endif %}
+    {% endfor %}
+    </ul>
+  </div>
+  <div class="card" id="absent-list">
+    <h2 style="color:var(--red);">Afwezig</h2>
+    <ul style="list-style:none;line-height:2;">
+    {% for player in players %}
+    {% set att = attendance_map.get(player.id) %}
+    {% if att and not att.present %}
+    <li id="absent-{{ att.id if att else 0 }}" class="player-absent-item">
+      {{ player.name }}{% if player.number %} <span class="badge badge-gray">{{ player.number }}</span>{% endif %}
+    </li>
+    {% endif %}
+    {% endfor %}
+    </ul>
+  </div>
+</div>
+
+<script>
+  let saveTimer = null;
+
+  function showStatus(msg, ok) {
+    const el = document.getElementById("save-status");
+    el.textContent = msg;
+    el.style.display = "block";
+    el.style.background = ok ? "var(--green-light)" : "var(--red-light)";
+    el.style.color = ok ? "var(--green-dark)" : "var(--red)";
+    clearTimeout(saveTimer);
+    saveTimer = setTimeout(() => { el.style.display = "none"; }, 2000);
+  }
+
+  async function saveAttendance(id, present, note) {
+    if (note === undefined) {
+      note = document.getElementById("note-" + id)?.value || "";
+    }
+    try {
+      const r = await fetch("/training/api/aanwezigheid/" + id, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ present, note }),
+      });
+      if (!r.ok) throw new Error();
+      showStatus("Opgeslagen", true);
+      updateLists();
+    } catch {
+      showStatus("Opslaan mislukt", false);
+    }
+  }
+
+  function saveNote(id) {
+    const checked = document.getElementById("toggle-" + id)?.checked ?? false;
+    const note = document.getElementById("note-" + id)?.value || "";
+    saveAttendance(id, checked, note);
+  }
+
+  function markAll(present) {
+    document.querySelectorAll("input[data-id]").forEach(cb => {
+      if (cb.type === "checkbox") {
+        cb.checked = present;
+        saveAttendance(cb.dataset.id, present);
+      }
+    });
+  }
+
+  function updateLists() {
+    const presentUl = document.querySelector("#present-list ul");
+    const absentUl  = document.querySelector("#absent-list ul");
+    presentUl.innerHTML = "";
+    absentUl.innerHTML  = "";
+
+    document.querySelectorAll("tbody tr").forEach(row => {
+      const id    = row.id.split("-")[1];
+      const cb    = document.getElementById("toggle-" + id);
+      if (!cb) return;
+      const name  = row.querySelector("td:nth-child(2)").textContent.trim();
+      const badge = row.querySelector(".badge") ? row.querySelector(".badge").outerHTML : "";
+      const li    = document.createElement("li");
+      li.innerHTML = name + (badge ? " " + badge : "");
+      if (cb.checked) presentUl.appendChild(li);
+      else            absentUl.appendChild(li);
+    });
+  }
+</script>
+{% endblock %}

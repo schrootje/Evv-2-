@@ -1,0 +1,128 @@
+{% extends "base.html" %}
+{% block title %}Dashboard – EVV Trainingen{% endblock %}
+
+{% block content %}
+<h1>Trainingen Dashboard</h1>
+
+<div class="grid-2">
+
+  <!-- ── Nieuwe sessie ── -->
+  <div class="card">
+    <h2>Nieuwe training aanmaken</h2>
+    <form method="post" action="/training/sessie/aanmaken">
+      <div class="form-group">
+        <label for="date">Datum *</label>
+        <input type="date" id="date" name="date" required />
+      </div>
+      <div class="form-group">
+        <label for="location">Locatie</label>
+        <input type="text" id="location" name="location" placeholder="Bijv. Sportpark De Hoge Bosch" />
+      </div>
+      <div class="form-group">
+        <label for="notes">Notities</label>
+        <textarea id="notes" name="notes" rows="2" placeholder="Optioneel..."></textarea>
+      </div>
+      <button class="btn btn-primary" type="submit">Training aanmaken</button>
+    </form>
+  </div>
+
+  <!-- ── Speler toevoegen ── -->
+  <div class="card">
+    <h2>Speler toevoegen</h2>
+    <form method="post" action="/training/speler/toevoegen">
+      <div class="form-group">
+        <label for="pname">Naam *</label>
+        <input type="text" id="pname" name="name" required placeholder="Voornaam Achternaam" />
+      </div>
+      <div class="form-group">
+        <label for="number">Rugnummer</label>
+        <input type="number" id="number" name="number" min="1" max="99" placeholder="Optioneel" />
+      </div>
+      <button class="btn btn-primary" type="submit">Speler toevoegen</button>
+    </form>
+
+    {% if players %}
+    <div style="margin-top:1.5rem;">
+      <h2>Selectie ({{ players|length }} spelers)</h2>
+      <table>
+        <thead><tr><th>#</th><th>Naam</th><th></th></tr></thead>
+        <tbody>
+        {% for p in players %}
+        <tr>
+          <td>{% if p.number %}<span class="badge badge-gray">{{ p.number }}</span>{% else %}–{% endif %}</td>
+          <td>{{ p.name }}</td>
+          <td style="text-align:right">
+            <form method="post" action="/training/speler/{{ p.id }}/verwijder"
+                  onsubmit="return confirm('{{ p.name }} verwijderen uit de selectie?')">
+              <button class="btn btn-ghost" type="submit" style="padding:.25rem .6rem;font-size:.75rem">
+                Verwijder
+              </button>
+            </form>
+          </td>
+        </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% endif %}
+  </div>
+
+</div>
+
+<!-- ── Trainingsoverzicht ── -->
+<div class="card">
+  <h2>Trainingen ({{ sessions|length }})</h2>
+  {% if sessions %}
+  <table>
+    <thead>
+      <tr>
+        <th>Datum</th>
+        <th>Locatie</th>
+        <th>Aanwezig</th>
+        <th>Afwezig</th>
+        <th>% aanwezig</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody>
+    {% for s in sessions %}
+    {% set present = s.attendances|selectattr("present","eq",true)|list|length %}
+    {% set total   = s.attendances|list|length %}
+    {% set pct     = ((present / total * 100)|round(0)|int) if total > 0 else 0 %}
+    <tr>
+      <td><strong>{{ s.date.strftime("%d %b %Y") }}</strong></td>
+      <td>{{ s.location or "–" }}</td>
+      <td><span class="badge badge-green">{{ present }}</span></td>
+      <td><span class="badge badge-red">{{ total - present }}</span></td>
+      <td>
+        <div style="display:flex;align-items:center;gap:.5rem;">
+          <div class="stat-bar" style="width:80px;">
+            <div class="stat-bar-fill" style="width:{{ pct }}%;"></div>
+          </div>
+          <span style="font-size:.8rem;color:var(--gray-600)">{{ pct }}%</span>
+        </div>
+      </td>
+      <td style="text-align:right;display:flex;gap:.5rem;justify-content:flex-end;">
+        <a class="btn btn-primary" href="/training/sessie/{{ s.id }}">Bekijk</a>
+        <form method="post" action="/training/sessie/{{ s.id }}/verwijder"
+              onsubmit="return confirm('Training verwijderen?')">
+          <button class="btn btn-danger" type="submit">Verwijder</button>
+        </form>
+      </td>
+    </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <div class="empty">
+    <p>Nog geen trainingen aangemaakt.</p>
+    <p style="margin-top:.5rem;font-size:.875rem;">Maak hierboven een nieuwe training aan.</p>
+  </div>
+  {% endif %}
+</div>
+
+<script>
+  // Set default date to today
+  document.getElementById("date").valueAsDate = new Date();
+</script>
+{% endblock %}

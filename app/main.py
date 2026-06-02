@@ -1,17 +1,23 @@
 from fastapi import FastAPI
+from fastapi.responses import RedirectResponse
 
-from app.routers import auth, financial
+from app.database import engine
+from app.models import training as training_models
+from app.routers import auth, financial, training
+
+training_models.Base.metadata.create_all(bind=engine)
 
 app = FastAPI(
-    title="Exact Online API",
-    description="FastAPI wrapper voor de Exact Online REST API — financieel/grootboek module.",
-    version="1.0.0",
+    title="EVV App",
+    description="Voetbal trainingen aanwezigheidsregistratie + Exact Online koppeling.",
+    version="2.0.0",
 )
 
+app.include_router(training.router)
 app.include_router(auth.router)
 app.include_router(financial.router)
 
 
 @app.get("/", tags=["Status"])
 def root():
-    return {"status": "ok", "docs": "/docs"}
+    return RedirectResponse(url="/training/")
