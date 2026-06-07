@@ -1,7 +1,10 @@
 """Financiële KPI-berekeningen op basis van een genormaliseerde GL-DataFrame."""
+from __future__ import annotations
+
 import pandas as pd
 
-# Rekeningbereiken — pas aan aan het werkelijke schema van Limtrade / Kurvers Groep
+# ── P&L rekeningbereiken ────────────────────────────────────────────────────
+# Pas aan aan het werkelijke schema van Kurvers Groep (zie CLAUDE.md)
 CATEGORIEEN: dict[str, tuple[int, int]] = {
     'Omzet':                (8000, 8999),
     'Kostprijs verkopen':   (7000, 7499),
@@ -14,12 +17,32 @@ CATEGORIEEN: dict[str, tuple[int, int]] = {
     'Financiële lasten':    (4700, 4799),
 }
 
+# ── Balans rekeningbereiken ─────────────────────────────────────────────────
+# Activa: debet-saldo is positief (bezit)
+BALANS_ACTIVA: dict[str, tuple[int, int]] = {
+    'Immateriële vaste activa': (100,  999),   # rekeningen 0100–0999
+    'Materiële vaste activa':   (1000, 1999),
+    'Financiële vaste activa':  (2000, 2999),
+    'Voorraden':                (3000, 3099),
+    'Debiteuren':               (3100, 3299),
+    'Liquide middelen':         (3300, 3499),
+}
+
+# Passiva: credit-saldo is positief (schuld / eigen vermogen)
+BALANS_PASSIVA: dict[str, tuple[int, int]] = {
+    'Eigen vermogen':           (200,  399),   # rekeningen 0200–0399
+    'Langlopende schulden':     (5000, 5499),
+    'Kortlopende schulden':     (6000, 6499),
+}
+
 MAANDNAMEN = {
     1: 'Jan', 2: 'Feb', 3: 'Mrt', 4: 'Apr',
     5: 'Mei', 6: 'Jun', 7: 'Jul', 8: 'Aug',
     9: 'Sep', 10: 'Okt', 11: 'Nov', 12: 'Dec',
 }
 
+
+# ── Hulpfuncties ────────────────────────────────────────────────────────────
 
 def _rekening_int(df: pd.DataFrame) -> pd.Series:
     """Extraheer het numerieke deel van de rekeningcode."""
@@ -34,6 +57,8 @@ def _filter(df: pd.DataFrame, van: int, tot: int) -> pd.DataFrame:
     return df.loc[(code >= van) & (code <= tot)]
 
 
+# ── P&L KPI's ───────────────────────────────────────────────────────────────
+
 def bereken_omzet(df: pd.DataFrame) -> float:
     """Totale omzet (credit − debet op omzetrekeningen 8xxx)."""
     s = _filter(df, *CATEGORIEEN['Omzet'])
@@ -42,14 +67,12 @@ def bereken_omzet(df: pd.DataFrame) -> float:
 
 def bereken_bruto_marge(df: pd.DataFrame) -> float:
     """Brutowinst = omzet − kostprijs verkopen."""
-    omzet = bereken_omzet(df)
     kpv = _filter(df, *CATEGORIEEN['Kostprijs verkopen'])
-    kostprijs = float(kpv['debet'].sum() - kpv['credit'].sum())
-    return omzet - kostprijs
+    return bereken_omzet(df) - float(kpv['debet'].sum() - kpv['credit'].sum())
 
 
 def bereken_kosten(df: pd.DataFrame) -> float:
-    """Totale bedrijfskosten (alle kostenrekeningen behalve omzet)."""
+    """Totale bedrijfskosten (alle P&L-rekeningen behalve omzet)."""
     totaal = 0.0
     for cat, (van, tot) in CATEGORIEEN.items():
         if cat == 'Omzet':
@@ -64,19 +87,33 @@ def bereken_resultaat(df: pd.DataFrame) -> float:
     return bereken_omzet(df) - bereken_kosten(df)
 
 
+def bereken_ebitda(df: pd.DataFrame) -> float:
+    """EBITDA = resultaat + afschrijvingen + financiële lasten."""
+    afschr = float(_filter(df, *CATEGORIEEN['Afschrijvingen']).pipe(
+        lambda s: s['debet'].sum() - s['credit'].sum()
+    ))
+    rente = float(_filter(df, *CATEGORIEEN['Financiële lasten']).pipe(
+        lambda s: s['debet'].sum() - s['credit'].sum()
+    ))
+    return bereken_resultaat(df) + afschr + rente
+
+
 def bruto_marge_pct(df: pd.DataFrame) -> float:
     omzet = bereken_omzet(df)
-    if omzet == 0:
-        return 0.0
-    return bereken_bruto_marge(df) / omzet * 100
+    return bereken_bruto_marge(df) / omzet * 100 if omzet else 0.0
 
 
 def netto_marge_pct(df: pd.DataFrame) -> float:
     omzet = bereken_omzet(df)
-    if omzet == 0:
-        return 0.0
-    return bereken_resultaat(df) / omzet * 100
+    return bereken_resultaat(df) / omzet * 100 if omzet else 0.0
 
+
+def ebitda_marge_pct(df: pd.DataFrame) -> float:
+    omzet = bereken_omzet(df)
+    return bereken_ebitda(df) / omzet * 100 if omzet else 0.0
+
+
+# ── Overzicht per maand ─────────────────────────────────────────────────────
 
 def resultaat_per_maand(df: pd.DataFrame) -> pd.DataFrame:
     """DataFrame met per periode: omzet, kosten en resultaat."""
@@ -94,8 +131,32 @@ def resultaat_per_maand(df: pd.DataFrame) -> pd.DataFrame:
     return tabel
 
 
+def marge_per_maand(df: pd.DataFrame) -> pd.DataFrame:
+    """DataFrame met bruto-, netto- en EBITDA-marge per periode (in %)."""
+    periodes = sorted(
+        int(p) for p in df['periode'].dropna().unique()
+        if 1 <= int(p) <= 12
+    )
+    rijen = []
+    for p in periodes:
+        sub = df[df['periode'] == p]
+        omzet = bereken_omzet(sub)
+        if omzet == 0:
+            continue
+        rijen.append({
+            'periode':      p,
+            'maand':        MAANDNAMEN.get(p, str(p)),
+            'Brutomarge':   bruto_marge_pct(sub),
+            'Nettomarge':   netto_marge_pct(sub),
+            'EBITDA-marge': ebitda_marge_pct(sub),
+        })
+    return pd.DataFrame(rijen)
+
+
+# ── Kosten ─────────────────────────────────────────────────────────────────
+
 def kosten_per_categorie(df: pd.DataFrame) -> pd.DataFrame:
-    """DataFrame met kostenbedrag per categorie (gesorteerd op bedrag)."""
+    """DataFrame met kostenbedrag per categorie (gesorteerd op bedrag desc.)."""
     rijen = []
     for cat, (van, tot) in CATEGORIEEN.items():
         if cat == 'Omzet':
@@ -134,6 +195,63 @@ def top_rekeningen(df: pd.DataFrame, n: int = 10) -> pd.DataFrame:
     )
 
 
+# ── Balanscontrole ──────────────────────────────────────────────────────────
+
+def debet_credit_check(df: pd.DataFrame) -> tuple[float, float, float]:
+    """Controleer of totaal debet = totaal credit.
+
+    Returns:
+        (totaal_debet, totaal_credit, verschil)
+    """
+    totaal_d = float(df['debet'].sum())
+    totaal_c = float(df['credit'].sum())
+    return totaal_d, totaal_c, abs(totaal_d - totaal_c)
+
+
+def balans_activa(df: pd.DataFrame) -> pd.DataFrame:
+    """Saldo per activacategorie (debet-saldo = positief bezit)."""
+    rijen = []
+    for cat, (van, tot) in BALANS_ACTIVA.items():
+        s = _filter(df, van, tot)
+        if s.empty:
+            continue
+        saldo = float(s['debet'].sum() - s['credit'].sum())
+        rijen.append({'categorie': cat, 'saldo': saldo})
+    return pd.DataFrame(rijen) if rijen else pd.DataFrame(columns=['categorie', 'saldo'])
+
+
+def balans_passiva(df: pd.DataFrame) -> pd.DataFrame:
+    """Saldo per passivacategorie (credit-saldo = positieve schuld)."""
+    rijen = []
+    for cat, (van, tot) in BALANS_PASSIVA.items():
+        s = _filter(df, van, tot)
+        if s.empty:
+            continue
+        saldo = float(s['credit'].sum() - s['debet'].sum())
+        rijen.append({'categorie': cat, 'saldo': saldo})
+    return pd.DataFrame(rijen) if rijen else pd.DataFrame(columns=['categorie', 'saldo'])
+
+
+def current_ratio(df: pd.DataFrame) -> float | None:
+    """Vlottende activa / kortlopende schulden. Geeft None als geen balansdata."""
+    vlottende = 0.0
+    for cat in ('Voorraden', 'Debiteuren', 'Liquide middelen'):
+        van, tot = BALANS_ACTIVA[cat]
+        s = _filter(df, van, tot)
+        vlottende += float(s['debet'].sum() - s['credit'].sum())
+
+    van, tot = BALANS_PASSIVA['Kortlopende schulden']
+    kortlopend = float(_filter(df, van, tot).pipe(
+        lambda s: s['credit'].sum() - s['debet'].sum()
+    ))
+
+    if kortlopend <= 0:
+        return None
+    return vlottende / kortlopend
+
+
+# ── Interne helpers ────────────────────────────────────────────────────────
+
 def _omzet_per_periode(df: pd.DataFrame) -> pd.Series:
     s = _filter(df, *CATEGORIEEN['Omzet'])
     if s.empty:
@@ -142,13 +260,11 @@ def _omzet_per_periode(df: pd.DataFrame) -> pd.Series:
 
 
 def _kosten_per_periode(df: pd.DataFrame) -> pd.Series:
-    stukken = []
-    for cat, (van, tot) in CATEGORIEEN.items():
-        if cat == 'Omzet':
-            continue
-        stukken.append(_filter(df, van, tot))
-    if not stukken:
-        return pd.Series(dtype=float)
+    stukken = [
+        _filter(df, van, tot)
+        for cat, (van, tot) in CATEGORIEEN.items()
+        if cat != 'Omzet'
+    ]
     alle = pd.concat(stukken)
     if alle.empty:
         return pd.Series(dtype=float)

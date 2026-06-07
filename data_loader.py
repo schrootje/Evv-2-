@@ -1,6 +1,11 @@
 """Inladen en valideren van Exact Online GL-exports (CSV of XLSX)."""
-import pandas as pd
+from __future__ import annotations
+
+import io
 from pathlib import Path
+from typing import IO
+
+import pandas as pd
 
 # Bekende kolomnamen per logisch veld (prioriteit: eerste match wint)
 KOLOMNAMEN: dict[str, list[str]] = {
@@ -17,17 +22,35 @@ KOLOMNAMEN: dict[str, list[str]] = {
 VEREISTE_VELDEN = {'rekening', 'omschrijving', 'periode', 'jaar', 'debet', 'credit'}
 
 
-def laad_export(bestandspad: str | Path) -> pd.DataFrame:
-    """Laad een CSV of XLSX en geef een genormaliseerde DataFrame terug."""
-    pad = Path(bestandspad)
-    lees_opties = {'dtype': str}
+def laad_export(bron: str | Path | IO, *, bestandsnaam: str = '') -> pd.DataFrame:
+    """Laad een CSV of XLSX en geef een genormaliseerde DataFrame terug.
 
-    if pad.suffix.lower() in ('.xlsx', '.xls'):
-        df = pd.read_excel(pad, **lees_opties)
-    elif pad.suffix.lower() == '.csv':
-        df = pd.read_csv(pad, sep=None, engine='python', **lees_opties)
+    Args:
+        bron: bestandspad (str/Path) of file-like object (bijv. Streamlit UploadedFile)
+        bestandsnaam: originele bestandsnaam bij file-like object, voor type-detectie
+    """
+    if hasattr(bron, 'read'):
+        suffix = Path(bestandsnaam).suffix.lower() if bestandsnaam else '.xlsx'
+        if suffix in ('.xlsx', '.xls'):
+            df = pd.read_excel(bron, dtype=str)
+        else:
+            if hasattr(bron, 'getvalue'):
+                ruwe_bytes = bron.getvalue()
+            else:
+                bron.seek(0)
+                ruwe_bytes = bron.read()
+            df = pd.read_csv(
+                io.StringIO(ruwe_bytes.decode('utf-8-sig', errors='replace')),
+                sep=None, engine='python', dtype=str,
+            )
     else:
-        raise ValueError(f"Bestandsformaat niet ondersteund: {pad.suffix!r}")
+        pad = Path(bron)
+        if pad.suffix.lower() in ('.xlsx', '.xls'):
+            df = pd.read_excel(pad, dtype=str)
+        elif pad.suffix.lower() == '.csv':
+            df = pd.read_csv(pad, sep=None, engine='python', dtype=str)
+        else:
+            raise ValueError(f"Bestandsformaat niet ondersteund: {pad.suffix!r}")
 
     return _normaliseer(df)
 
@@ -89,20 +112,18 @@ def _parse_bedrag(serie: pd.Series) -> pd.Series:
     Ondersteunt:
     - Standaard (XLSX-numeriek): 61750.50
     - Nederlands (CSV-export):   61.750,50
-    - Gemengd zonder teken:      61750
+    - Angelsaksisch:             61,750.50
     """
     tekst = serie.astype(str).str.strip().str.replace(r'\s', '', regex=True)
 
-    # Detecteer Nederlandse opmaak: bevat zowel punt als komma (bv. "1.234,56")
+    # Detecteer Nederlandse opmaak: punt als duizendtalscheider + komma als decimaal
     is_nl = tekst.str.contains(r'\d\.\d{3},', regex=True)
 
     resultaat = tekst.copy()
-    # Nederlandse opmaak: verwijder punt (duizendtal), vervang komma door punt
     resultaat = resultaat.where(
         ~is_nl,
         tekst.str.replace('.', '', regex=False).str.replace(',', '.', regex=False),
     )
-    # Standaardopmaak: verwijder eventuele komma als duizendtalscheider (1,234.56)
     resultaat = resultaat.where(
         is_nl,
         resultaat.str.replace(',', '', regex=False),
